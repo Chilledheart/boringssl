@@ -26,6 +26,8 @@ OPENSSL_MSVC_PRAGMA(warning(pop))
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef OPENSSL_WINDOWS_ALLOW_WINXP
+
 static BOOL CALLBACK call_once_init(INIT_ONCE *once, void *arg, void **out) {
   void (**init)(void) = (void (**)(void))arg;
   (**init)();
@@ -61,6 +63,10 @@ void CRYPTO_MUTEX_unlock_write(CRYPTO_MUTEX *lock) {
 void CRYPTO_MUTEX_cleanup(CRYPTO_MUTEX *lock) {
   // SRWLOCKs require no cleanup.
 }
+
+#endif // OPENSSL_WINDOWS_ALLOW_WINXP
+
+#ifndef HAVE_LIBCXX
 
 static SRWLOCK g_destructors_lock = SRWLOCK_INIT;
 static thread_local_destructor_t g_destructors[NUM_OPENSSL_THREAD_LOCALS];
@@ -232,5 +238,7 @@ int CRYPTO_set_thread_local(thread_local_data_t index, void *value,
   pointers[index] = value;
   return 1;
 }
+
+#endif // HAVE_LIBCXX
 
 #endif  // OPENSSL_WINDOWS_THREADS
