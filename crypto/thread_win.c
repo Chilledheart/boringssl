@@ -26,43 +26,96 @@ OPENSSL_MSVC_PRAGMA(warning(pop))
 #include <stdlib.h>
 #include <string.h>
 
-static BOOL CALLBACK call_once_init(INIT_ONCE *once, void *arg, void **out) {
-  void (**init)(void) = (void (**)(void))arg;
-  (**init)();
-  return TRUE;
+#include <openssl/mem.h>
+
+
+#ifdef OPENSSL_WINDOWS_ALLOW_WINXP
+
+union run_once_arg_t {
+  void (*func)(void);
+  void *data;
+};
+
+static void run_once(CRYPTO_once_t *once, void (*init)(union run_once_arg_t),
+                     union run_once_arg_t arg) {
+  /* Values must be aligned. */
+  assert((((uintptr_t) once) & 3) == 0);
+
+  /* This assumes that reading *once has acquire semantics. This should be true
+   * on x86 and x86-64, where we expect Windows to run. */
+#if !defined(OPENSSL_X86) && !defined(OPENSSL_X86_64)
+#error "Windows once code may not work on other platforms." \
+       "You can use InitOnceBeginInitialize on >=Vista"
+#endif
+  if (*once == 1) {
+    return;
+  }
+
+  for (;;) {
+    switch (InterlockedCompareExchange(once, 2, 0)) {
+      case 0:
+        /* The value was zero so we are the first thread to call |CRYPTO_once|
+         * on it. */
+        init(arg);
+        /* Write one to indicate that initialisation is complete. */
+        InterlockedExchange(once, 1);
+        return;
+
+      case 1:
+        /* Another thread completed initialisation between our fast-path check
+         * and |InterlockedCompareExchange|. */
+        return;
+
+      case 2:
+        /* Another thread is running the initialisation. Switch to it then try
+         * again. */
+        SwitchToThread();
+        break;
+
+      default:
+        abort();
+    }
+  }
 }
 
-void CRYPTO_once(CRYPTO_once_t *once, void (*init)(void)) {
-  if (!InitOnceExecuteOnce(once, call_once_init, &init, NULL)) {
+static void call_once_init(union run_once_arg_t arg) {
+  arg.func();
+}
+
+void CRYPTO_once(CRYPTO_once_t *in_once, void (*init)(void)) {
+  union run_once_arg_t arg;
+  arg.func = init;
+  run_once(in_once, call_once_init, arg);
+}
+
+void CRYPTO_MUTEX_init(CRYPTO_MUTEX *lock) {
+  if (!InitializeCriticalSectionAndSpinCount(lock, 0x400)) {
     abort();
   }
 }
 
-void CRYPTO_MUTEX_init(CRYPTO_MUTEX *lock) {
-  InitializeSRWLock(lock);
-}
-
 void CRYPTO_MUTEX_lock_read(CRYPTO_MUTEX *lock) {
-  AcquireSRWLockShared(lock);
+  /* Since we have to support Windows XP, read locks are actually exclusive. */
+  EnterCriticalSection(lock);
 }
 
 void CRYPTO_MUTEX_lock_write(CRYPTO_MUTEX *lock) {
-  AcquireSRWLockExclusive(lock);
+  EnterCriticalSection(lock);
 }
 
 void CRYPTO_MUTEX_unlock_read(CRYPTO_MUTEX *lock) {
-  ReleaseSRWLockShared(lock);
+  LeaveCriticalSection(lock);
 }
 
 void CRYPTO_MUTEX_unlock_write(CRYPTO_MUTEX *lock) {
-  ReleaseSRWLockExclusive(lock);
+  LeaveCriticalSection(lock);
 }
 
 void CRYPTO_MUTEX_cleanup(CRYPTO_MUTEX *lock) {
-  // SRWLOCKs require no cleanup.
+  DeleteCriticalSection(lock);
 }
 
-static SRWLOCK g_destructors_lock = SRWLOCK_INIT;
+static CRITICAL_SECTION g_destructors_lock;
 static thread_local_destructor_t g_destructors[NUM_OPENSSL_THREAD_LOCALS];
 
 static CRYPTO_once_t g_thread_local_init_once = CRYPTO_ONCE_INIT;
@@ -70,6 +123,10 @@ static DWORD g_thread_local_key;
 static int g_thread_local_failed;
 
 static void thread_local_init(void) {
+  if (!InitializeCriticalSectionAndSpinCount(&g_destructors_lock, 0x400)) {
+    g_thread_local_failed = 1;
+    return;
+  }
   g_thread_local_key = TlsAlloc();
   g_thread_local_failed = (g_thread_local_key == TLS_OUT_OF_INDEXES);
 }
@@ -97,9 +154,9 @@ static void NTAPI thread_local_destructor(PVOID module, DWORD reason,
 
   thread_local_destructor_t destructors[NUM_OPENSSL_THREAD_LOCALS];
 
-  AcquireSRWLockExclusive(&g_destructors_lock);
+  EnterCriticalSection(&g_destructors_lock);
   OPENSSL_memcpy(destructors, g_destructors, sizeof(destructors));
-  ReleaseSRWLockExclusive(&g_destructors_lock);
+  LeaveCriticalSection(&g_destructors_lock);
 
   for (unsigned i = 0; i < NUM_OPENSSL_THREAD_LOCALS; i++) {
     if (destructors[i] != NULL) {
@@ -225,6 +282,147 @@ int CRYPTO_set_thread_local(thread_local_data_t index, void *value,
     }
   }
 
+  EnterCriticalSection(&g_destructors_lock);
+  g_destructors[index] = destructor;
+  LeaveCriticalSection(&g_destructors_lock);
+
+  pointers[index] = value;
+  return 1;
+}
+
+#else // OPENSSL_WINDOWS_ALLOW_WINXP
+
+static BOOL CALLBACK call_once_init(INIT_ONCE *once, void *arg, void **out) {
+  void (**init)(void) = (void (**)(void))arg;
+  (**init)();
+  return TRUE;
+}
+
+void CRYPTO_once(CRYPTO_once_t *once, void (*init)(void)) {
+  if (!InitOnceExecuteOnce(once, call_once_init, &init, NULL)) {
+    abort();
+  }
+}
+
+void CRYPTO_MUTEX_init(CRYPTO_MUTEX *lock) {
+  InitializeSRWLock(lock);
+}
+
+void CRYPTO_MUTEX_lock_read(CRYPTO_MUTEX *lock) {
+  AcquireSRWLockShared(lock);
+}
+
+void CRYPTO_MUTEX_lock_write(CRYPTO_MUTEX *lock) {
+  AcquireSRWLockExclusive(lock);
+}
+
+void CRYPTO_MUTEX_unlock_read(CRYPTO_MUTEX *lock) {
+  ReleaseSRWLockShared(lock);
+}
+
+void CRYPTO_MUTEX_unlock_write(CRYPTO_MUTEX *lock) {
+  ReleaseSRWLockExclusive(lock);
+}
+
+void CRYPTO_MUTEX_cleanup(CRYPTO_MUTEX *lock) {
+  // SRWLOCKs require no cleanup.
+}
+
+static SRWLOCK g_destructors_lock = SRWLOCK_INIT;
+
+static thread_local_destructor_t g_destructors[NUM_OPENSSL_THREAD_LOCALS];
+
+static CRYPTO_once_t g_thread_local_init_once = CRYPTO_ONCE_INIT;
+static DWORD g_thread_local_key;
+static int g_thread_local_failed;
+
+static void NTAPI thread_local_destructor(void* data);
+
+static void thread_local_init(void) {
+  g_thread_local_key = FlsAlloc(thread_local_destructor);
+  g_thread_local_failed = (g_thread_local_key == FLS_OUT_OF_INDEXES);
+}
+
+static void NTAPI thread_local_destructor(void* data) {
+  CRYPTO_once(&g_thread_local_init_once, thread_local_init);
+  if (g_thread_local_failed) {
+    return;
+  }
+
+  void **pointers = (void**) data;
+  if (pointers == NULL) {
+    return;
+  }
+
+  thread_local_destructor_t destructors[NUM_OPENSSL_THREAD_LOCALS];
+
+  AcquireSRWLockExclusive(&g_destructors_lock);
+  OPENSSL_memcpy(destructors, g_destructors, sizeof(destructors));
+  ReleaseSRWLockExclusive(&g_destructors_lock);
+
+  for (unsigned i = 0; i < NUM_OPENSSL_THREAD_LOCALS; i++) {
+    if (destructors[i] != NULL) {
+      destructors[i](pointers[i]);
+    }
+  }
+
+  free(pointers);
+}
+
+static void **get_thread_locals(void) {
+  // |FlsGetValue| clears the last error even on success, so that callers may
+  // distinguish it successfully returning NULL or failing. It is documented to
+  // never fail if the argument is a valid index from |FlsAlloc|, so we do not
+  // need to handle this.
+  //
+  // However, this error-mangling behavior interferes with the caller's use of
+  // |GetLastError|. In particular |SSL_get_error| queries the error queue to
+  // determine whether the caller should look at the OS's errors. To avoid
+  // destroying state, save and restore the Windows error.
+  //
+  // https://msdn.microsoft.com/en-us/library/windows/desktop/ms686812(v=vs.85).aspx
+  DWORD last_error = GetLastError();
+  void **ret = FlsGetValue(g_thread_local_key);
+  SetLastError(last_error);
+  return ret;
+}
+
+void *CRYPTO_get_thread_local(thread_local_data_t index) {
+  CRYPTO_once(&g_thread_local_init_once, thread_local_init);
+  if (g_thread_local_failed) {
+    return NULL;
+  }
+
+  void **pointers = get_thread_locals();
+  if (pointers == NULL) {
+    return NULL;
+  }
+  return pointers[index];
+}
+
+int CRYPTO_set_thread_local(thread_local_data_t index, void *value,
+                            thread_local_destructor_t destructor) {
+  CRYPTO_once(&g_thread_local_init_once, thread_local_init);
+  if (g_thread_local_failed) {
+    destructor(value);
+    return 0;
+  }
+
+  void **pointers = get_thread_locals();
+  if (pointers == NULL) {
+    pointers = malloc(sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS);
+    if (pointers == NULL) {
+      destructor(value);
+      return 0;
+    }
+    OPENSSL_memset(pointers, 0, sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS);
+    if (FlsSetValue(g_thread_local_key, pointers) == 0) {
+      free(pointers);
+      destructor(value);
+      return 0;
+    }
+  }
+
   AcquireSRWLockExclusive(&g_destructors_lock);
   g_destructors[index] = destructor;
   ReleaseSRWLockExclusive(&g_destructors_lock);
@@ -232,5 +430,7 @@ int CRYPTO_set_thread_local(thread_local_data_t index, void *value,
   pointers[index] = value;
   return 1;
 }
+
+#endif // OPENSSL_WINDOWS_ALLOW_WINXP
 
 #endif  // OPENSSL_WINDOWS_THREADS

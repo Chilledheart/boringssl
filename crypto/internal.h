@@ -584,8 +584,13 @@ static inline int constant_time_declassify_int(int v) {
 typedef uint32_t CRYPTO_once_t;
 #define CRYPTO_ONCE_INIT 0
 #elif defined(OPENSSL_WINDOWS_THREADS)
+#ifdef OPENSSL_WINDOWS_ALLOW_WINXP
+typedef volatile LONG CRYPTO_once_t;
+#define CRYPTO_ONCE_INIT 0
+#else // OPENSSL_WINDOWS_ALLOW_WINXP
 typedef INIT_ONCE CRYPTO_once_t;
 #define CRYPTO_ONCE_INIT INIT_ONCE_STATIC_INIT
+#endif // OPENSSL_WINDOWS_ALLOW_WINXP
 #elif defined(OPENSSL_PTHREADS)
 typedef pthread_once_t CRYPTO_once_t;
 #define CRYPTO_ONCE_INIT PTHREAD_ONCE_INIT
@@ -742,8 +747,13 @@ typedef struct crypto_mutex_st {
 } CRYPTO_MUTEX;
 #define CRYPTO_MUTEX_INIT { 0 }
 #elif defined(OPENSSL_WINDOWS_THREADS)
+#ifdef OPENSSL_WINDOWS_ALLOW_WINXP
+typedef CRITICAL_SECTION CRYPTO_MUTEX;
+#define CRYPTO_MUTEX_INIT { }
+#else // OPENSSL_WINDOWS_ALLOW_WINXP
 typedef SRWLOCK CRYPTO_MUTEX;
 #define CRYPTO_MUTEX_INIT SRWLOCK_INIT
+#endif // OPENSSL_WINDOWS_ALLOW_WINXP
 #elif defined(OPENSSL_PTHREADS)
 typedef pthread_rwlock_t CRYPTO_MUTEX;
 #define CRYPTO_MUTEX_INIT PTHREAD_RWLOCK_INITIALIZER

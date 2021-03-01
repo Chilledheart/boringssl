@@ -23,6 +23,14 @@ OPENSSL_MSVC_PRAGMA(warning(push, 3))
 
 #include <windows.h>
 
+#ifdef OPENSSL_WINDOWS_ALLOW_WINXP
+// #define needed to link in RtlGenRandom(), a.k.a. SystemFunction036.  See the
+// "Community Additions" comment on MSDN here:
+// http://msdn.microsoft.com/en-us/library/windows/desktop/aa387694.aspx
+#define SystemFunction036 NTAPI SystemFunction036
+#include <ntsecapi.h>
+#undef SystemFunction036
+#else // OPENSSL_WINDOWS_ALLOW_WINXP
 #if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP) && \
     !WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
 #include <bcrypt.h>
@@ -35,6 +43,7 @@ OPENSSL_MSVC_PRAGMA(comment(lib, "bcrypt.lib"))
 #include <ntsecapi.h>
 #undef SystemFunction036
 #endif  // WINAPI_PARTITION_APP && !WINAPI_PARTITION_DESKTOP
+#endif  // OPENSSL_WINDOWS_ALLOW_WINXP
 
 OPENSSL_MSVC_PRAGMA(warning(pop))
 
@@ -47,6 +56,9 @@ void CRYPTO_sysrand(uint8_t *out, size_t requested) {
     if (requested < output_bytes_this_pass) {
       output_bytes_this_pass = (ULONG)requested;
     }
+#ifdef OPENSSL_WINDOWS_ALLOW_WINXP
+    if (RtlGenRandom(out, output_bytes_this_pass) == FALSE) {
+#else // OPENSSL_WINDOWS_ALLOW_WINXP
     // On non-UWP configurations, use RtlGenRandom instead of BCryptGenRandom
     // to avoid accessing resources that may be unavailable inside the
     // Chromium sandbox. See https://crbug.com/boringssl/307
@@ -58,6 +70,7 @@ void CRYPTO_sysrand(uint8_t *out, size_t requested) {
 #else
     if (RtlGenRandom(out, output_bytes_this_pass) == FALSE) {
 #endif  // WINAPI_PARTITION_APP && !WINAPI_PARTITION_DESKTOP
+#endif  // OPENSSL_WINDOWS_ALLOW_WINXP
       abort();
     }
     requested -= output_bytes_this_pass;
