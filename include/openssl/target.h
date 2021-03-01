@@ -80,6 +80,11 @@
 
 #if defined(_WIN32)
 #define OPENSSL_WINDOWS
+#if defined(_WIN32_WINNT) && !defined(OPENSSL_WINDOWS_ALLOW_WINXP)
+#if _WIN32_WINNT <= 0x0501
+#define OPENSSL_WINDOWS_ALLOW_WINXP
+#endif
+#endif
 #endif
 
 // Trusty and Android baremetal aren't Linux but currently define __linux__.
