@@ -647,8 +647,18 @@ static inline int constant_time_declassify_int(int v) {
 typedef uint32_t CRYPTO_once_t;
 #define CRYPTO_ONCE_INIT 0
 #elif defined(OPENSSL_WINDOWS_THREADS)
+#ifdef OPENSSL_WINDOWS_ALLOW_WINXP
+#ifdef HAVE_LIBCXX
+typedef void* CRYPTO_once_t;
+#define CRYPTO_ONCE_INIT 0
+#else // HAVE_LIBCXX
+typedef volatile LONG CRYPTO_once_t;
+#define CRYPTO_ONCE_INIT 0
+#endif
+#else // OPENSSL_WINDOWS_ALLOW_WINXP
 typedef INIT_ONCE CRYPTO_once_t;
 #define CRYPTO_ONCE_INIT INIT_ONCE_STATIC_INIT
+#endif // OPENSSL_WINDOWS_ALLOW_WINXP
 #elif defined(OPENSSL_PTHREADS)
 typedef pthread_once_t CRYPTO_once_t;
 #define CRYPTO_ONCE_INIT PTHREAD_ONCE_INIT
@@ -805,8 +815,18 @@ typedef struct crypto_mutex_st {
 } CRYPTO_MUTEX;
 #define CRYPTO_MUTEX_INIT { 0 }
 #elif defined(OPENSSL_WINDOWS_THREADS)
+#ifdef OPENSSL_WINDOWS_ALLOW_WINXP
+#ifdef HAVE_LIBCXX
+typedef struct CRYPTO_MUTEX {
+  CRYPTO_once_t once;
+  CRITICAL_SECTION lock;
+} CRYPTO_MUTEX;
+#define CRYPTO_MUTEX_INIT { CRYPTO_ONCE_INIT, { } }
+#endif // HAVE_LIBCXX
+#else
 typedef SRWLOCK CRYPTO_MUTEX;
 #define CRYPTO_MUTEX_INIT SRWLOCK_INIT
+#endif
 #elif defined(OPENSSL_PTHREADS)
 typedef pthread_rwlock_t CRYPTO_MUTEX;
 #define CRYPTO_MUTEX_INIT PTHREAD_RWLOCK_INITIALIZER
@@ -887,7 +907,12 @@ typedef enum {
 
 // thread_local_destructor_t is the type of a destructor function that will be
 // called when a thread exits and its thread-local storage needs to be freed.
-typedef void (*thread_local_destructor_t)(void *);
+#if defined(HAVE_LIBCXX) && defined(OPENSSL_WINDOWS)
+#define CRYPTO_TLS_DESTRUCTOR_CC __stdcall
+#else
+#define CRYPTO_TLS_DESTRUCTOR_CC
+#endif
+typedef void (CRYPTO_TLS_DESTRUCTOR_CC*thread_local_destructor_t)(void *);
 
 // CRYPTO_get_thread_local gets the pointer value that is stored for the
 // current thread for the given index, or NULL if none has been set.
