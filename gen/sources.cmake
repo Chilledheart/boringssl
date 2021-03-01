@@ -433,6 +433,7 @@ set(
   crypto/thread_none.c
   crypto/thread_pthread.c
   crypto/thread_win.c
+  crypto/thread_win.cc
   crypto/trust_token/pmbtoken.c
   crypto/trust_token/trust_token.c
   crypto/trust_token/voprf.c
