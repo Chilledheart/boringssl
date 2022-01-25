@@ -42,9 +42,20 @@ add_library(
 # Although libssl also provides headers that require an include directory, the
 # flag is already specified by libcrypto, so we omit target_include_directories
 # here.
+if (BORINGSSL_BUILD_TESTS)
 install_if_enabled(TARGETS ssl EXPORT OpenSSLTargets ${INSTALL_DESTINATION_DEFAULT})
+endif()
 set_property(TARGET ssl PROPERTY EXPORT_NAME SSL)
 target_link_libraries(ssl crypto)
+
+if (MSVC)
+  set_target_properties(ssl PROPERTIES
+      COMPILE_PDB_NAME ssl
+      COMPILE_PDB_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}
+  )
+endif()
+
+if (BORINGSSL_BUILD_TESTS)
 
 add_executable(
   ssl_test
@@ -55,3 +66,5 @@ add_executable(
 )
 target_link_libraries(ssl_test test_support_lib boringssl_gtest_main ssl crypto)
 add_dependencies(all_tests ssl_test)
+
+endif()

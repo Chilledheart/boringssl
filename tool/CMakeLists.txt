@@ -19,5 +19,7 @@ add_executable(
   tool.cc
   transport_common.cc
 )
+if (BORINGSSL_BUILD_TESTS)
 install_if_enabled(TARGETS bssl DESTINATION ${INSTALL_DESTINATION_DEFAULT})
+endif()
 target_link_libraries(bssl ssl crypto)

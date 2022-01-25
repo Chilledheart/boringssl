@@ -1,3 +1,11 @@
+if (MSVC AND NOT OPENSSL_NO_ASM)
+  # The ASM_MASM compiler id for this compiler is "MSVC", so fill out the runtime library table.
+  set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreaded         "")
+  set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDLL      "")
+  set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebug    "")
+  set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebugDLL "")
+endif()
+
 add_subdirectory(fipsmodule)
 add_subdirectory(test)
 
@@ -301,11 +309,21 @@ if(OPENSSL_NASM)
   target_sources(crypto PRIVATE ${CRYPTO_SOURCES_NASM})
 endif()
 target_include_directories(crypto PUBLIC
-  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
   $<INSTALL_INTERFACE:include>
 )
+if (BORINGSSL_BUILD_TESTS)
 install_if_enabled(TARGETS crypto EXPORT OpenSSLTargets ${INSTALL_DESTINATION_DEFAULT})
+endif()
+
 set_property(TARGET crypto PROPERTY EXPORT_NAME Crypto)
+
+if (MSVC)
+  set_target_properties(crypto PROPERTIES
+      COMPILE_PDB_NAME crypto
+      COMPILE_PDB_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}
+  )
+endif()
 
 if(FIPS_SHARED)
   # Rewrite libcrypto.so to inject the correct module hash value. This assumes
@@ -344,6 +362,8 @@ endif()
 if(USE_CUSTOM_LIBCXX)
   target_link_libraries(crypto libcxx)
 endif()
+
+if (BORINGSSL_BUILD_TESTS)
 
 # urandom_test is a separate binary because it needs to be able to observe the
 # PRNG initialisation, which means that it can't have other tests running before
@@ -429,3 +449,5 @@ add_executable(
 )
 target_link_libraries(crypto_test test_support_lib boringssl_gtest_main crypto)
 add_dependencies(all_tests crypto_test)
+
+endif()
