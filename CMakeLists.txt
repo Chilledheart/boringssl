@@ -13,18 +13,39 @@ if(WIN32)
   # On Windows, prefer cl over gcc if both are available. By default most of
   # the CMake generators prefer gcc, even on Windows.
   set(CMAKE_GENERATOR_CC cl)
+  # new in cmake 3.10
+  # https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_ARCHITECTURE_ID.html
+  # not used in ABI-detection due to the cmake issue https://gitlab.kitware.com/cmake/cmake/-/issues/17702
+  set(CMAKE_C_COMPILER_ARCHITECTURE_ID "${CMAKE_C_COMPILER_TARGET}" CACHE STRING "")
+  set(CMAKE_CXX_COMPILER_ARCHITECTURE_ID "${CMAKE_CXX_COMPILER_TARGET}" CACHE STRING "")
 endif()
 
 include(cmake/go.cmake)
 include(cmake/paths.cmake)
 include(gen/sources.cmake)
 
+# Select the MSVC runtime library for use by compilers targeting the MSVC ABI.
+# Use MSVC_CRT_LINKAGE variable internally, option: dynamic and static
+#
+# Introduced by cmake 3.15
+# https://cmake.org/cmake/help/latest/variable/CMAKE_MSVC_RUNTIME_LIBRARY.html#variable:CMAKE_MSVC_RUNTIME_LIBRARY
+# and https://cmake.org/cmake/help/latest/policy/CMP0091.html
+if(POLICY CMP0091)
+  cmake_policy(SET CMP0091 NEW)
+endif()
+# https://docs.microsoft.com/en-us/cpp/c-runtime-library/crt-library-features?redirectedfrom=MSDN&view=msvc-170
+set(MSVC_CRT_LINKAGE "dynamic" CACHE STRING "")
+if (VCPKG_CRT_LINKAGE AND NOT VCPKG_CRT_LINKAGE STREQUAL MSVC_CRT_LINKAGE)
+  message(FATAL_ERROR "CRT LINKAGE not matched in configuration")
+endif()
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>$<$<STREQUAL:${MSVC_CRT_LINKAGE},dynamic>:DLL>")
+
 enable_language(C)
 enable_language(CXX)
 
 include(GNUInstallDirs)
 
-set(INSTALL_ENABLED 1)
+set(INSTALL_ENABLED 0)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   find_package(PkgConfig QUIET)
@@ -105,12 +126,16 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 if(CMAKE_COMPILER_IS_GNUCXX OR CLANG)
   # Note clang-cl is odd and sets both CLANG and MSVC. We base our configuration
   # primarily on our normal Clang one.
-  set(C_CXX_FLAGS "-Werror -Wformat=2 -Wsign-compare -Wwrite-strings -Wvla -Wshadow -Wtype-limits -Wmissing-field-initializers")
+  # TODO(bbe) took out -Wmissing-field-initializers for pki - fix and put back or disable only for pki
+  set(C_CXX_FLAGS "-Wformat=2 -Wsign-compare -Wwrite-strings -Wvla -Wshadow -Wtype-limits -Wmissing-field-initializers")
   if(MSVC)
     # clang-cl sets different default warnings than clang. It also treats -Wall
     # as -Weverything, to match MSVC. Instead -W3 is the alias for -Wall.
     # See http://llvm.org/viewvc/llvm-project?view=revision&revision=319116
-    set(C_CXX_FLAGS "${C_CXX_FLAGS} -W3 -Wno-unused-parameter -fmsc-version=1900")
+    set(C_CXX_FLAGS "${C_CXX_FLAGS} -W3 -Wno-unused-parameter")
+    # googletest suppresses warning C4996 via a pragma, but clang-cl does not
+    # honor it. Suppress it here to compensate. See https://crbug.com/772117.
+    set(C_CXX_FLAGS "${C_CXX_FLAGS} -Wno-deprecated-declarations")
   else()
     if(EMSCRIPTEN)
       # emscripten's emcc/clang does not accept the "-ggdb" flag.
@@ -192,18 +217,15 @@ elseif(MSVC)
       )
   string(REPLACE "C" " -wd" MSVC_DISABLED_WARNINGS_STR
                             ${MSVC_DISABLED_WARNINGS_LIST})
-  set(CMAKE_C_FLAGS   "-utf-8 -W4 -WX ${MSVC_DISABLED_WARNINGS_STR}")
+  set(CMAKE_C_FLAGS   "-utf-8 -W4 ${MSVC_DISABLED_WARNINGS_STR}")
   # Without /Zc:__cplusplus, MSVC does not define the right value for
   # __cplusplus. See https://devblogs.microsoft.com/cppblog/msvc-now-correctly-reports-__cplusplus/
   # If this becomes too problematic for downstream code, we can look at
   # _MSVC_LANG.
-  set(CMAKE_CXX_FLAGS "-utf-8 -W4 -WX ${MSVC_DISABLED_WARNINGS_STR} -Zc:__cplusplus")
+  set(CMAKE_CXX_FLAGS "-utf-8 -W4 ${MSVC_DISABLED_WARNINGS_STR} -Zc:__cplusplus")
 endif()
 
 if(WIN32)
-  add_definitions(-D_HAS_EXCEPTIONS=0)
-  add_definitions(-DWIN32_LEAN_AND_MEAN)
-  add_definitions(-DNOMINMAX)
   # Allow use of fopen.
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif()
@@ -357,6 +379,21 @@ if(OPENSSL_NO_ASM)
   add_definitions(-DOPENSSL_NO_ASM)
 endif()
 
+# short patch for msvc, not sure if it works
+if (MSVC)
+  if("${MSVC_C_ARCHITECTURE_ID}" STREQUAL "X86")
+    set(CMAKE_SYSTEM_PROCESSOR "i686")
+  elseif("${MSVC_C_ARCHITECTURE_ID}" STREQUAL "x64")
+    set(CMAKE_SYSTEM_PROCESSOR "x86_64")
+  elseif("${MSVC_C_ARCHITECTURE_ID}" STREQUAL "ARM")
+    set(CMAKE_SYSTEM_PROCESSOR "arm")
+  elseif("${MSVC_C_ARCHITECTURE_ID}" STREQUAL "ARM64")
+    set(CMAKE_SYSTEM_PROCESSOR "arm64")
+  else()
+    message(FATAL_ERROR "Failed to determine the MSVC target architecture: ${MSVC_C_ARCHITECTURE_ID}")
+  endif()
+endif()
+
 if(FIPS_DELOCATE OR NOT OPENSSL_NO_ASM)
   # On x86 and x86_64 Windows, we use the NASM output.
   if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|amd64|x86|i[3-6]86")
@@ -385,6 +422,44 @@ if(FIPS_DELOCATE OR NOT OPENSSL_NO_ASM)
     if(NOT CMAKE_ASM_COMPILER_ID MATCHES "Clang")
       set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -Wa,-g")
     endif()
+  endif()
+endif()
+
+
+if (MSVC)
+  if (MSVC_CRT_LINKAGE STREQUAL "static")
+    message(STATUS "Build against static crt")
+    # replace /MD with /MT
+    set(CompilerFlags
+      CMAKE_CXX_FLAGS
+      CMAKE_CXX_FLAGS_DEBUG
+      CMAKE_CXX_FLAGS_MINSIZEREL
+      CMAKE_CXX_FLAGS_RELEASE
+      CMAKE_CXX_FLAGS_RELWITHDEBINFO
+      CMAKE_C_FLAGS
+      CMAKE_C_FLAGS_DEBUG
+      CMAKE_C_FLAGS_RELEASE
+      CMAKE_C_FLAGS_MINSIZEREL
+      CMAKE_C_FLAGS_RELEASE
+      CMAKE_C_FLAGS_RELWITHDEBINFO
+      )
+    foreach(CompilerFlag ${CompilerFlags})
+      string(REPLACE "/MD" "/MT" ${CompilerFlag} "${${CompilerFlag}}")
+    endforeach()
+    foreach(CompilerFlag ${CompilerFlags})
+      string(REPLACE "/MDd" "/MTd" ${CompilerFlag} "${${CompilerFlag}}")
+    endforeach()
+  endif()
+endif()
+
+## generate debug info in obj or pdb
+if (MSVC)
+  if (CLANG)
+    set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE} /Z7")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Z7")
+  else()
+    set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE} /Zi")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
   endif()
 endif()
 
@@ -462,6 +537,9 @@ if(USE_CUSTOM_LIBCXX)
   target_link_libraries(libcxx libcxxabi)
 endif()
 
+option(BORINGSSL_BUILD_TESTS "Build with test." OFF)
+
+if (BORINGSSL_BUILD_TESTS)
 # Add minimal googletest targets. The provided one has many side-effects, and
 # googletest has a very straightforward build.
 add_library(
@@ -490,6 +568,8 @@ add_subdirectory(ssl/test)
 add_subdirectory(util/fipstools)
 add_subdirectory(util/fipstools/acvp/modulewrapper)
 
+endif (BORINGSSL_BUILD_TESTS)
+
 if(OPENSSL_ASM)
   set(CRYPTO_SOURCES_ASM_USED ${CRYPTO_SOURCES_ASM})
   set(BCM_SOURCES_ASM_USED ${BCM_SOURCES_ASM})
@@ -498,6 +578,14 @@ elseif(OPENSSL_NASM)
   set(CRYPTO_SOURCES_ASM_USED ${CRYPTO_SOURCES_NASM})
   set(BCM_SOURCES_ASM_USED ${BCM_SOURCES_NASM})
   set(TEST_SUPPORT_SOURCES_ASM_USED ${TEST_SUPPORT_SOURCES_NASM})
+endif()
+
+if (MSVC AND NOT OPENSSL_NO_ASM)
+  # The ASM_MASM compiler id for this compiler is "MSVC", so fill out the runtime library table.
+  set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreaded         "")
+  set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDLL      "")
+  set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebug    "")
+  set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebugDLL "")
 endif()
 
 if(FIPS_DELOCATE AND FIPS_SHARED)
@@ -575,10 +663,17 @@ endif()
 
 add_library(crypto ${CRYPTO_SOURCES} ${CRYPTO_FIPS_OBJECTS} ${CRYPTO_SOURCES_ASM_USED})
 target_include_directories(crypto PUBLIC
-  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
 set_property(TARGET crypto PROPERTY EXPORT_NAME Crypto)
+
+if (MSVC)
+  set_target_properties(crypto PROPERTIES
+      COMPILE_PDB_NAME crypto
+      COMPILE_PDB_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}
+  )
+endif()
 
 if(FIPS_SHARED)
   # Rewrite libcrypto.so to inject the correct module hash value. This assumes
@@ -607,7 +702,7 @@ endif()
 # For now we assume embedded OSes do not have threads. Additionally, the Threads
 # package does not work with Android, but Android does not require any extra
 # parameters to link pthreads.
-if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Generic|Android)$")
+if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME MATCHES "^(Generic|Android)$")
   find_package(Threads REQUIRED)
   target_link_libraries(crypto Threads::Threads)
 endif()
@@ -623,11 +718,18 @@ add_library(ssl ${SSL_SOURCES})
 # flag is already specified by libcrypto, so we omit target_include_directories
 # here.
 set_property(TARGET ssl PROPERTY EXPORT_NAME SSL)
+if (MSVC)
+  set_target_properties(ssl PROPERTIES
+      COMPILE_PDB_NAME ssl
+      COMPILE_PDB_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}
+  )
+endif()
 target_link_libraries(ssl crypto)
 
 add_library(decrepit ${DECREPIT_SOURCES})
 target_link_libraries(decrepit crypto ssl)
 
+if (BORINGSSL_BUILD_TESTS)
 add_library(test_support_lib STATIC
             ${TEST_SUPPORT_SOURCES} ${TEST_SUPPORT_SOURCES_ASM_USED})
 if(LIBUNWIND_FOUND)
@@ -659,6 +761,8 @@ target_link_libraries(decrepit_test test_support_lib boringssl_gtest
                       decrepit crypto)
 add_dependencies(all_tests decrepit_test)
 
+endif (BORINGSSL_BUILD_TESTS)
+
 if(APPLE)
   set(PKI_CXX_FLAGS "-fno-aligned-new")
 endif()
@@ -666,21 +770,34 @@ endif()
 add_library(pki ${PKI_SOURCES})
 target_link_libraries(pki crypto)
 
+# The PKI library requires C++17.
+set_target_properties(
+  pki
+  PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED YES
+  COMPILE_FLAGS "${PKI_CXX_FLAGS}")
+
+if (BORINGSSL_BUILD_TESTS)
+
 add_executable(pki_test ${PKI_TEST_SOURCES})
 target_link_libraries(pki_test test_support_lib boringssl_gtest pki crypto)
 add_dependencies(all_tests pki_test)
 
 # The PKI library requires C++17.
 set_target_properties(
-  pki pki_test
+  pki_test
   PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED YES
   COMPILE_FLAGS "${PKI_CXX_FLAGS}")
 
+endif (BORINGSSL_BUILD_TESTS)
+
 add_executable(bssl ${BSSL_SOURCES})
 target_link_libraries(bssl ssl crypto)
 
+if (BORINGSSL_BUILD_TESTS)
 # Historically, targets were built in subdirectories. For compatibility with
 # existing tools, we, for now, copy the targets into the subdirectories. This
 # will be removed sometime in 2024.
@@ -688,6 +805,8 @@ copy_post_build(crypto crypto crypto_test urandom_test)
 copy_post_build(ssl ssl ssl_test)
 copy_post_build(decrepit decrepit decrepit_test)
 copy_post_build(tool bssl)
+
+endif (BORINGSSL_BUILD_TESTS)
 
 if(FUZZ)
   if(LIBFUZZER_FROM_DEPS)
@@ -713,6 +832,8 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(HANDSHAKER_ARGS "-handshaker-path" $<TARGET_FILE:handshaker>)
 endif()
+
+if (BORINGSSL_BUILD_TESTS)
 
 if(FIPS)
   add_custom_target(
@@ -765,6 +886,8 @@ else()
       COMMAND ${CMAKE_COMMAND} -E echo "Running tests requires Go"
       COMMAND ${CMAKE_COMMAND} -E false)
 endif()
+
+endif(BORINGSSL_BUILD_TESTS)
 
 if(INSTALL_ENABLED)
   install(TARGETS crypto ssl EXPORT OpenSSLTargets)
