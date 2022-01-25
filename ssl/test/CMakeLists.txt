@@ -1,3 +1,5 @@
+if (BORINGSSL_BUILD_TESTS)
+
 add_executable(
   bssl_shim
 
@@ -29,4 +31,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
   # Declare a dummy target for run_tests to depend on.
   add_custom_target(handshaker)
+endif()
+
 endif()
