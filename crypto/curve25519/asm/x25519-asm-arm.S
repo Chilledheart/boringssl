@@ -33,10 +33,21 @@ vpush {q4,q5,q6,q7}
 mov r12,sp
 sub sp,sp,#736
 and sp,sp,#0xffffffe0
+#if __ARM_ARCH >= 6
 strd r4,[sp,#0]
 strd r6,[sp,#8]
 strd r8,[sp,#16]
 strd r10,[sp,#24]
+#else
+str r4,[sp,#0]
+str r5,[sp,#4]
+str r6,[sp,#8]
+str r7,[sp,#12]
+str r8,[sp,#16]
+str r9,[sp,#20]
+str r10,[sp,#24]
+str r11,[sp,#28]
+#endif
 str r12,[sp,#480]
 str r14,[sp,#484]
 mov r0,r0
@@ -2110,10 +2121,21 @@ str r6,[r0],#4
 str r7,[r0],#4
 str r8,[r0],#4
 str r1,[r0]
+#if __ARM_ARCH >= 6
 ldrd r4,[sp,#0]
 ldrd r6,[sp,#8]
 ldrd r8,[sp,#16]
 ldrd r10,[sp,#24]
+#else
+ldr r4,[sp,#0]
+ldr r5,[sp,#4]
+ldr r6,[sp,#8]
+ldr r7,[sp,#12]
+ldr r8,[sp,#16]
+ldr r9,[sp,#20]
+ldr r10,[sp,#24]
+ldr r11,[sp,#28]
+#endif
 ldr r12,[sp,#480]
 ldr r14,[sp,#484]
 ldr r0,=0
