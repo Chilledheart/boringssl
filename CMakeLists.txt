@@ -206,6 +206,13 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CLANG)
   if(CLANG)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wmissing-prototypes")
   endif()
+
+  # Don't warn about "maybe" uninitialized. Clang doesn't include this
+  # in -Wall but gcc does, and it gives false positives.
+  if (NOT CLANG)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-maybe-uninitialized -Wno-deprecated-declarations")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-maybe-uninitialized -Wno-deprecated-declarations")
+  endif()
 elseif(MSVC)
   set(MSVC_DISABLED_WARNINGS_LIST
       "C4100" # 'exarg' : unreferenced formal parameter
@@ -424,7 +431,6 @@ if(FIPS_DELOCATE OR NOT OPENSSL_NO_ASM)
     endif()
   endif()
 endif()
-
 
 if (MSVC)
   if (MSVC_CRT_LINKAGE STREQUAL "static")
