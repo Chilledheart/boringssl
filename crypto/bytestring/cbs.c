@@ -521,7 +521,7 @@ int CBS_get_asn1_int64(CBS *cbs, int64_t *out) {
   }
   uint8_t sign_extend[sizeof(int64_t)];
   memset(sign_extend, is_negative ? 0xff : 0, sizeof(sign_extend));
-  for (size_t i = 0; i < len; i++) {
+  for (size_t i = 0; i < len && i < sizeof(sign_extend); i++) {
     sign_extend[i] = data[len - i - 1];
   }
   memcpy(out, sign_extend, sizeof(sign_extend));
