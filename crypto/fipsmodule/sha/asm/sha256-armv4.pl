@@ -489,7 +489,6 @@ sha256_block_data_order_neon:
 	ldr	$Ktbl,.LK256_shortcut_neon
 .LK256_add_neon:
 	add	$Ktbl,pc,$Ktbl
-
 	bic	$H,$H,#15		@ align for 128-bit stores
 	mov	$t2,sp
 	mov	sp,$H			@ alloca
