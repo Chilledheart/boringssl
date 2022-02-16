@@ -796,12 +796,20 @@ static bool parse_sigalgs_list(Array<uint16_t> *out, const char *str) {
       case '+':
         if (state == hash_name) {
           OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SIGNATURE_ALGORITHM);
+#ifdef _WIN32
+          ERR_add_error_dataf("+ found in hash name at offset %Iu", offset);
+#else
           ERR_add_error_dataf("+ found in hash name at offset %zu", offset);
+#endif
           return false;
         }
         if (buf_used == 0) {
           OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SIGNATURE_ALGORITHM);
+#ifdef _WIN32
+          ERR_add_error_dataf("empty public key type at offset %Iu", offset);
+#else
           ERR_add_error_dataf("empty public key type at offset %zu", offset);
+#endif
           return false;
         }
         buf[buf_used] = 0;
@@ -828,7 +836,11 @@ static bool parse_sigalgs_list(Array<uint16_t> *out, const char *str) {
       case 0:
         if (buf_used == 0) {
           OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SIGNATURE_ALGORITHM);
+#ifdef _WIN32
+          ERR_add_error_dataf("empty element at offset %Iu", offset);
+#else
           ERR_add_error_dataf("empty element at offset %zu", offset);
+#endif
           return false;
         }
 
@@ -891,7 +903,11 @@ static bool parse_sigalgs_list(Array<uint16_t> *out, const char *str) {
       default:
         if (buf_used == sizeof(buf) - 1) {
           OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SIGNATURE_ALGORITHM);
+#ifdef _WIN32
+          ERR_add_error_dataf("substring too long at offset %Iu", offset);
+#else
           ERR_add_error_dataf("substring too long at offset %zu", offset);
+#endif
           return false;
         }
 
@@ -899,8 +915,13 @@ static bool parse_sigalgs_list(Array<uint16_t> *out, const char *str) {
           buf[buf_used++] = c;
         } else {
           OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SIGNATURE_ALGORITHM);
+#ifdef _WIN32
+          ERR_add_error_dataf("invalid character 0x%02x at offest %Iu", c,
+                              offset);
+#else
           ERR_add_error_dataf("invalid character 0x%02x at offest %zu", c,
                               offset);
+#endif
           return false;
         }
     }
