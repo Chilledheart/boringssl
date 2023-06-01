@@ -113,11 +113,11 @@ static int sock_read(BIO *b, char *out, int outl) {
 
 static int sock_write(BIO *b, const char *in, int inl) {
   bio_clear_socket_error();
-#if defined(OPENSSL_WINDOWS)
-  int ret = send(b->num, in, inl, 0);
-#else
-  int ret = (int)write(b->num, in, inl);
+  int flags = 0;
+#if defined(MSG_NOSIGNAL)
+  flags |= MSG_NOSIGNAL;
 #endif
+  int ret = send(b->num, in, inl, flags);
   BIO_clear_retry_flags(b);
   if (ret <= 0) {
     if (bio_socket_should_retry(ret)) {
