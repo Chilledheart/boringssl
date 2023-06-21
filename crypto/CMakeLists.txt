@@ -335,9 +335,8 @@ if(WIN32)
   target_link_libraries(crypto ws2_32)
 endif()
 
-if(NOT ANDROID)
-  find_package(Threads REQUIRED)
-  target_link_libraries(crypto Threads::Threads)
+if(NOT WIN32 AND NOT ANDROID)
+  target_link_libraries(crypto pthread)
 endif()
 
 # Every target depends on crypto, so we add libcxx as a dependency here to
