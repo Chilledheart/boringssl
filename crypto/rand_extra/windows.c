@@ -62,14 +62,29 @@ void CRYPTO_sysrand(uint8_t *out, size_t requested) {
 typedef BOOL (WINAPI *ProcessPrngFunction)(PBYTE pbData, SIZE_T cbData);
 static ProcessPrngFunction g_processprng_fn = NULL;
 
-static void init_processprng(void) {
-  HMODULE hmod = LoadLibraryW(L"bcryptprimitives");
+// wine's trick
+static void init_processprng_fallback(void) {
+  HMODULE hmod = LoadLibraryW(L"advapi32");
   if (hmod == NULL) {
     abort();
   }
-  g_processprng_fn = (ProcessPrngFunction)GetProcAddress(hmod, "ProcessPrng");
+  g_processprng_fn = (ProcessPrngFunction)GetProcAddress(hmod, "SystemFunction036");
   if (g_processprng_fn == NULL) {
     abort();
+  }
+}
+
+static void init_processprng(void) {
+  HMODULE hmod = LoadLibraryW(L"bcryptprimitives");
+  if (hmod == NULL) {
+    init_processprng_fallback();
+    return;
+  }
+  g_processprng_fn = (ProcessPrngFunction)GetProcAddress(hmod, "ProcessPrng");
+  if (g_processprng_fn == NULL) {
+    // Possible on Windows 7 SP1, need fallback as well
+    init_processprng_fallback();
+    return;
   }
 }
 
