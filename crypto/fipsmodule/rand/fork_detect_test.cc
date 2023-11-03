@@ -34,6 +34,10 @@
 #include <vector>
 #endif
 
+#if defined(OPENSSL_FREEBSD)
+#include <sys/wait.h>
+#endif
+
 #include <gtest/gtest.h>
 
 
